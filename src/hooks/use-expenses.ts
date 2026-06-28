@@ -1,54 +1,69 @@
-import { usePersistence } from './use-persistence';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import { loadUserData, saveUserData, logActivity } from '@/lib/user-storage';
+import type { Expense } from '@/types';
 
-export interface Transaction {
-  id: string;
-  amount: number;
-  type: 'income' | 'expense';
-  category: string;
-  date: number;
-}
+const EXPENSES_KEY = 'expenses';
+// Phase 3: migrate expense persistence behind this hook to backend storage.
 
 export function useExpenses() {
-  const [transactions, setTransactions] = usePersistence<Transaction[]>('nexora-expenses', [
-    { id: '1', amount: 45.50, type: 'expense', category: 'Food', date: Date.now() },
-    { id: '2', amount: 1200, type: 'income', category: 'Salary', date: Date.now() - 86400000 },
-    { id: '3', amount: 15.99, type: 'expense', category: 'Streaming', date: Date.now() - 172800000 },
-  ]);
+  const { user } = useAuth();
+  const [expenses, setExpenses] = useState<Expense[]>([]);
 
-  const addTransaction = (amount: number, type: 'income' | 'expense', category: string) => {
-    const tx: Transaction = {
-      id: Date.now().toString(),
-      amount,
-      type,
-      category,
-      date: Date.now(),
-    };
-    setTransactions([tx, ...transactions]);
-    return tx;
-  };
+  useEffect(() => {
+    setExpenses(loadUserData<Expense[]>(user?.id ?? null, EXPENSES_KEY, []));
+  }, [user?.id]);
 
-  const deleteTransaction = (id: string) => {
-    setTransactions(prev => prev.filter(t => t.id !== id));
-  };
-
-  const totalBalance = transactions.reduce((acc, tx) => 
-    tx.type === 'income' ? acc + tx.amount : acc - tx.amount, 0
+  const persist = useCallback(
+    (next: Expense[]) => {
+      setExpenses(next);
+      saveUserData(user?.id ?? null, EXPENSES_KEY, next);
+    },
+    [user?.id],
   );
 
-  const totalIncome = transactions
-    .filter(tx => tx.type === 'income')
-    .reduce((acc, tx) => acc + tx.amount, 0);
+  const addExpense = useCallback(
+    (data: Omit<Expense, 'id' | 'createdAt'>) => {
+      const expense: Expense = {
+        ...data,
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+      };
+      persist([expense, ...expenses]);
+      logActivity(user?.id ?? null, {
+        type: 'expense',
+        title: data.type === 'income' ? 'Income added' : 'Expense added',
+        description: `${data.title}: $${data.amount.toFixed(2)}`,
+      });
+      return expense;
+    },
+    [expenses, persist, user?.id],
+  );
 
-  const totalExpenses = transactions
-    .filter(tx => tx.type === 'expense')
-    .reduce((acc, tx) => acc + tx.amount, 0);
+  const deleteExpense = useCallback(
+    (id: string) => {
+      persist(expenses.filter((e) => e.id !== id));
+    },
+    [expenses, persist],
+  );
 
-  return {
-    transactions,
-    addTransaction,
-    deleteTransaction,
-    totalBalance,
-    totalIncome,
-    totalExpenses
-  };
+  const analytics = useMemo(() => {
+    const income = expenses.filter((e) => e.type === 'income').reduce((s, e) => s + e.amount, 0);
+    const totalExpenses = expenses.filter((e) => e.type === 'expense').reduce((s, e) => s + e.amount, 0);
+    const byCategory = expenses
+      .filter((e) => e.type === 'expense')
+      .reduce<Record<string, number>>((acc, e) => {
+        acc[e.category] = (acc[e.category] ?? 0) + e.amount;
+        return acc;
+      }, {});
+
+    return {
+      income,
+      totalExpenses,
+      balance: income - totalExpenses,
+      byCategory: Object.entries(byCategory).map(([name, value]) => ({ name, value })),
+    };
+  }, [expenses]);
+
+  return { expenses, addExpense, deleteExpense, analytics };
 }

@@ -1,51 +1,75 @@
-import { usePersistence } from './use-persistence';
+import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import { loadUserData, saveUserData, logActivity } from '@/lib/user-storage';
+import type { Note } from '@/types';
 
-export interface Note {
-  id: string;
-  title: string;
-  content: string;
-  category: string;
-  tags: string[];
-  summary?: string;
-  suggestedTasks?: string[];
-  updatedAt: number;
-}
+const NOTES_KEY = 'notes';
+// Phase 3: migrate note persistence behind this hook to backend storage.
 
 export function useNotes() {
-  const [notes, setNotes] = usePersistence<Note[]>("nexora-notes", [
-    { 
-      id: "1", 
-      title: "Welcome to Nexora Notes", 
-      content: "This is your futuristic note taking module. Start by creating a new note using the plus button below.", 
-      category: "Personal",
-      tags: ["welcome", "nexora"],
-      summary: "Welcome note for the new system.",
-      updatedAt: Date.now() 
+  const { user } = useAuth();
+  const [notes, setNotes] = useState<Note[]>([]);
+
+  useEffect(() => {
+    setNotes(loadUserData<Note[]>(user?.id ?? null, NOTES_KEY, []));
+  }, [user?.id]);
+
+  const persist = useCallback(
+    (next: Note[]) => {
+      setNotes(next);
+      saveUserData(user?.id ?? null, NOTES_KEY, next);
     },
-  ]);
+    [user?.id],
+  );
 
-  const addNote = (note: Omit<Note, 'id' | 'updatedAt'>) => {
-    const newNote: Note = {
-      ...note,
-      id: Date.now().toString(),
-      updatedAt: Date.now(),
-    };
-    setNotes([newNote, ...notes]);
-    return newNote;
-  };
+  const addNote = useCallback(
+    (title: string, content = '', category = 'General') => {
+      const now = new Date().toISOString();
+      const note: Note = {
+        id: crypto.randomUUID(),
+        title: title.trim() || 'Untitled',
+        content,
+        category,
+        createdAt: now,
+        updatedAt: now,
+      };
+      persist([note, ...notes]);
+      logActivity(user?.id ?? null, { type: 'note', title: 'Note created', description: note.title });
+      return note;
+    },
+    [notes, persist, user?.id],
+  );
 
-  const updateNote = (id: string, updates: Partial<Note>) => {
-    setNotes(notes.map(n => n.id === id ? { ...n, ...updates, updatedAt: Date.now() } : n));
-  };
+  const updateNote = useCallback(
+    (id: string, updates: Partial<Pick<Note, 'title' | 'content' | 'category'>>) => {
+      persist(
+        notes.map((n) =>
+          n.id === id ? { ...n, ...updates, updatedAt: new Date().toISOString() } : n,
+        ),
+      );
+    },
+    [notes, persist],
+  );
 
-  const deleteNote = (id: string) => {
-    setNotes(notes.filter(n => n.id !== id));
-  };
+  const deleteNote = useCallback(
+    (id: string) => {
+      persist(notes.filter((n) => n.id !== id));
+    },
+    [notes, persist],
+  );
 
-  return {
-    notes,
-    addNote,
-    updateNote,
-    deleteNote,
-  };
+  const searchNotes = useCallback(
+    (query: string) => {
+      const q = query.toLowerCase();
+      return notes.filter(
+        (n) =>
+          n.title.toLowerCase().includes(q) ||
+          n.content.toLowerCase().includes(q) ||
+          n.category.toLowerCase().includes(q),
+      );
+    },
+    [notes],
+  );
+
+  return { notes, addNote, updateNote, deleteNote, searchNotes };
 }

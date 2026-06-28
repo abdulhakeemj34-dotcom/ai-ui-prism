@@ -1,55 +1,79 @@
-import { usePersistence } from './use-persistence';
+import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import { loadUserData, saveUserData, logActivity } from '@/lib/user-storage';
+import type { Task } from '@/types';
 
-export interface Task {
-  id: string;
-  text: string;
-  completed: boolean;
-  important: boolean;
-  dueDate?: string;
-  urgent?: boolean;
-}
+const TASKS_KEY = 'tasks';
+// Phase 3: migrate task persistence behind this hook to backend storage.
 
 export function useTasks() {
-  const [tasks, setTasks] = usePersistence<Task[]>('nexora-tasks', [
-    { id: '1', text: 'Design Nexora UI', completed: true, important: true, dueDate: 'Today', urgent: true },
-    { id: '2', text: 'Implement Chat Logic', completed: false, important: true, dueDate: 'Today', urgent: false },
-    { id: '3', text: 'Add Persistence Layer', completed: false, important: false, dueDate: 'Today', urgent: false },
-  ]);
+  const { user } = useAuth();
+  const [tasks, setTasks] = useState<Task[]>([]);
 
-  const addTask = (text: string) => {
-    const task: Task = {
-      id: Date.now().toString(),
-      text,
-      completed: false,
-      important: false,
-      dueDate: 'Today'
-    };
-    setTasks([task, ...tasks]);
-    return task;
-  };
+  useEffect(() => {
+    setTasks(loadUserData<Task[]>(user?.id ?? null, TASKS_KEY, []));
+  }, [user?.id]);
 
-  const toggleTask = (id: string) => {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
-  };
+  const persist = useCallback(
+    (next: Task[]) => {
+      setTasks(next);
+      saveUserData(user?.id ?? null, TASKS_KEY, next);
+    },
+    [user?.id],
+  );
 
-  const toggleImportant = (id: string) => {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, important: !t.important } : t));
-  };
+  const addTask = useCallback(
+    (title: string, options?: Partial<Pick<Task, 'description' | 'priority' | 'dueDate'>>) => {
+      const now = new Date().toISOString();
+      const task: Task = {
+        id: crypto.randomUUID(),
+        title: title.trim(),
+        description: options?.description,
+        completed: false,
+        priority: options?.priority ?? 'medium',
+        dueDate: options?.dueDate,
+        createdAt: now,
+        updatedAt: now,
+      };
+      persist([task, ...tasks]);
+      logActivity(user?.id ?? null, { type: 'task', title: 'Task created', description: task.title });
+      return task;
+    },
+    [tasks, persist, user?.id],
+  );
 
-  const deleteTask = (id: string) => {
-    setTasks(prev => prev.filter(t => t.id !== id));
-  };
+  const updateTask = useCallback(
+    (id: string, updates: Partial<Omit<Task, 'id' | 'createdAt'>>) => {
+      persist(
+        tasks.map((t) =>
+          t.id === id ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t,
+        ),
+      );
+    },
+    [tasks, persist],
+  );
 
-  const reorderTasks = (newTasks: Task[]) => {
-    setTasks(newTasks);
-  };
+  const deleteTask = useCallback(
+    (id: string) => {
+      persist(tasks.filter((t) => t.id !== id));
+    },
+    [tasks, persist],
+  );
 
-  return {
-    tasks,
-    addTask,
-    toggleTask,
-    toggleImportant,
-    deleteTask,
-    reorderTasks
-  };
+  const toggleComplete = useCallback(
+    (id: string) => {
+      const task = tasks.find((t) => t.id === id);
+      if (task) {
+        updateTask(id, { completed: !task.completed });
+        logActivity(user?.id ?? null, {
+          type: 'task',
+          title: task.completed ? 'Task reopened' : 'Task completed',
+          description: task.title,
+        });
+      }
+    },
+    [tasks, updateTask, user?.id],
+  );
+
+  return { tasks, addTask, updateTask, deleteTask, toggleComplete };
 }

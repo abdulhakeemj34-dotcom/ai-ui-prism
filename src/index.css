@@ -128,6 +128,26 @@
   --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
 }
 
+/* Color blind accessible theme — high contrast, distinguishable palette */
+.colorblind {
+  --chart-1: oklch(0.65 0.2 250);
+  --chart-2: oklch(0.7 0.18 145);
+  --chart-3: oklch(0.75 0.15 85);
+  --chart-4: oklch(0.6 0.2 25);
+  --chart-5: oklch(0.55 0.15 300);
+  --destructive: oklch(0.55 0.25 25);
+  --primary: oklch(0.55 0.2 250);
+}
+
+.colorblind.dark {
+  --primary: oklch(0.75 0.15 250);
+  --destructive: oklch(0.7 0.2 25);
+}
+
+html {
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
